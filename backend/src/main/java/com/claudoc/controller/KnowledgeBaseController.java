@@ -1,5 +1,6 @@
 package com.claudoc.controller;
 
+import com.claudoc.agent.UiActionTracker;
 import com.claudoc.model.Chunk;
 import com.claudoc.model.Document;
 import com.claudoc.service.KnowledgeBaseService;
@@ -16,6 +17,7 @@ import java.util.Map;
 public class KnowledgeBaseController {
 
     private final KnowledgeBaseService knowledgeBaseService;
+    private final UiActionTracker uiActionTracker;
 
     @GetMapping("/notes/tree")
     public List<KnowledgeBaseService.TreeNode> getTree() {
@@ -30,7 +32,9 @@ public class KnowledgeBaseController {
     @GetMapping("/notes/{id}")
     public ResponseEntity<Document> getNote(@PathVariable String id) {
         try {
-            return ResponseEntity.ok(knowledgeBaseService.getNote(id));
+            Document doc = knowledgeBaseService.getNote(id);
+            uiActionTracker.record("open_document", doc.getPath() + " \"" + doc.getTitle() + "\"");
+            return ResponseEntity.ok(doc);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
@@ -96,13 +100,16 @@ public class KnowledgeBaseController {
 
     @GetMapping("/trash")
     public List<Document> listTrash() {
+        uiActionTracker.record("expand_trash", null);
         return knowledgeBaseService.listTrash();
     }
 
     @PostMapping("/trash/{id}/restore")
     public ResponseEntity<Document> restoreNote(@PathVariable String id) {
         try {
-            return ResponseEntity.ok(knowledgeBaseService.restoreNote(id));
+            Document doc = knowledgeBaseService.restoreNote(id);
+            uiActionTracker.record("restore_note", doc.getPath() + " \"" + doc.getTitle() + "\"");
+            return ResponseEntity.ok(doc);
         } catch (Exception e) {
             return ResponseEntity.notFound().build();
         }
@@ -112,6 +119,7 @@ public class KnowledgeBaseController {
     public ResponseEntity<Void> permanentDelete(@PathVariable String id) {
         try {
             knowledgeBaseService.permanentDelete(id);
+            uiActionTracker.record("permanent_delete", "id=" + id);
             return ResponseEntity.ok().build();
         } catch (Exception e) {
             return ResponseEntity.notFound().build();

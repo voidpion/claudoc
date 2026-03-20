@@ -125,8 +125,7 @@ export default function FileTree({ tree, selectedId, onSelect, onRefresh }: Prop
             depth={1}
           />
         ))}
-      </div>
-      <div className="trash-section">
+        <div className="trash-section">
         <div
           className="tree-item trash-header"
           onClick={() => setTrashExpanded(!trashExpanded)}
@@ -168,6 +167,7 @@ export default function FileTree({ tree, selectedId, onSelect, onRefresh }: Prop
             ))}
           </div>
         )}
+        </div>
       </div>
     </div>
   );

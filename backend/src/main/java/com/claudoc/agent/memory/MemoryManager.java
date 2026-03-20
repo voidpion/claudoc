@@ -1,5 +1,6 @@
 package com.claudoc.agent.memory;
 
+import com.claudoc.agent.UiActionTracker;
 import com.claudoc.config.AgentConfig;
 import com.claudoc.llm.ChatMessage;
 import com.claudoc.llm.LlmClient;
@@ -29,6 +30,15 @@ public class MemoryManager {
             When you retrieve information from the knowledge base, always cite the source document (path or title).
             When the user shares important information, preferences, or decisions,
             proactively save them as memory notes under the '/_memory/' path using create_note.
+
+            ## Path and Directory Rules
+            - Directories do NOT exist independently. They are created implicitly by note paths.
+              For example, creating a note at '/logs/2024-01-01.md' implicitly creates the '/logs/' directory.
+            - When the user asks to "create a directory/folder", create an initial note under that path.
+              e.g. "Create a logs directory" → create_note(path="/logs/README.md", title="Logs", content="...")
+            - The '/_memory/' path is ONLY for the agent's own memory notes (user preferences, decisions).
+              NEVER put user-requested content under '/_memory/'. Use appropriate top-level paths instead.
+              e.g. user says "create a log directory" → use '/logs/', NOT '/_memory/logs/'
             """;
 
     // ── Step 3: Tool Chaining Workflows ──
@@ -76,6 +86,7 @@ public class MemoryManager {
 
     private final MessageRepository messageRepository;
     private final DocumentRepository documentRepository;
+    private final UiActionTracker uiActionTracker;
     private final AgentConfig agentConfig;
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
@@ -93,6 +104,12 @@ public class MemoryManager {
         String kbOverview = buildKbOverview();
         if (!kbOverview.isEmpty()) {
             context.add(ChatMessage.system("[Knowledge Base Overview]\n" + kbOverview));
+        }
+
+        // [UI Context] — recent user actions from the web UI
+        String uiContext = uiActionTracker.format();
+        if (!uiContext.isEmpty()) {
+            context.add(ChatMessage.system(uiContext));
         }
 
         // [L2: Global Summary]
