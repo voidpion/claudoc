@@ -21,7 +21,10 @@ public class ReadNoteTool implements AgentTool {
 
     @Override
     public String description() {
-        return "Read the full content of a note by its ID or path.";
+        return "Read the full content of a note by its ID or path. "
+                + "Use when: you need the complete text of a specific document, e.g. after retrieve returns relevant chunks and you want full context. "
+                + "Provide either 'id' (UUID from other tool results) or 'path' (e.g. '/notes/welcome.md'). "
+                + "Returns: JSON with id, path, title, and full content.";
     }
 
     @Override

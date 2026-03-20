@@ -19,7 +19,9 @@ public class UpdateNoteTool implements AgentTool {
 
     @Override
     public String description() {
-        return "Update an existing note's title and/or content.";
+        return "Update an existing note's title and/or content by ID. "
+                + "Use when: user asks to modify/edit a document. Always read_note first to see current content before updating. "
+                + "Returns: confirmation with updated title and path.";
     }
 
     @Override

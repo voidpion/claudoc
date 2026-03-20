@@ -22,7 +22,10 @@ public class SearchTool implements AgentTool {
 
     @Override
     public String description() {
-        return "Search notes by keyword (full-text search in title and content).";
+        return "Keyword search: find notes by exact keyword match in title and content (SQL LIKE). "
+                + "Use when: user asks to find notes containing a specific term, or you need to check if a note about a topic already exists. "
+                + "Do NOT use for semantic/meaning-based queries — use 'retrieve' instead. "
+                + "Returns: JSON array of matching documents with id, path, title, and a 200-char snippet.";
     }
 
     @Override

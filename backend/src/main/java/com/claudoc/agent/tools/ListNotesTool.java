@@ -20,7 +20,9 @@ public class ListNotesTool implements AgentTool {
 
     @Override
     public String description() {
-        return "List all notes in the knowledge base as a directory tree structure.";
+        return "List all notes in the knowledge base as a directory tree. "
+                + "Use when: user asks 'what notes are there', 'show me the file list', or you need to browse the KB structure. "
+                + "Returns: JSON array of tree nodes with id, name, type (folder/file), and children.";
     }
 
     @Override

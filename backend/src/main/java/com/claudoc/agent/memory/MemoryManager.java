@@ -5,7 +5,9 @@ import com.claudoc.llm.ChatMessage;
 import com.claudoc.llm.LlmClient;
 import com.claudoc.llm.LlmResponseChunk;
 import com.claudoc.llm.ToolCall;
+import com.claudoc.model.Document;
 import com.claudoc.model.Message;
+import com.claudoc.repository.DocumentRepository;
 import com.claudoc.repository.MessageRepository;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -20,36 +22,80 @@ import java.util.*;
 @Slf4j
 public class MemoryManager {
 
-    private static final String SYSTEM_PROMPT = """
+    // ── Step 1: Structured System Prompt ──
+    private static final String IDENTITY_AND_RULES = """
             You are Claudoc, an AI assistant integrated with a knowledge base system.
-            You can read, create, update, delete, search, and semantically retrieve notes.
-
+            You help users manage, search, and understand their notes. Be helpful, concise, and accurate.
+            When you retrieve information from the knowledge base, always cite the source document (path or title).
             When the user shares important information, preferences, or decisions,
-            proactively save them as memory notes under the '/_memory/' path using the create_note tool.
+            proactively save them as memory notes under the '/_memory/' path using create_note.
+            """;
 
-            When answering questions, use the 'retrieve' tool to find relevant information from the knowledge base.
-            Use the 'search' tool for keyword-based lookups.
+    // ── Step 3: Tool Chaining Workflows ──
+    private static final String TOOL_GUIDANCE = """
+            ## Tool Selection Guide
 
-            Always be helpful, concise, and accurate. When you retrieve information from the knowledge base,
-            cite the source document.
+            Choose the right tool based on the user's intent:
+            - "What notes are there?" / "Show files" → list_notes
+            - Question about a topic → retrieve (semantic search) → optionally read_note for full text
+            - "Find notes containing X" / exact term lookup → search (keyword match)
+            - "Create a note about X" → first search to check duplicates → create_note
+            - "Edit/update note X" → first read_note to see current content → update_note
+            - "Delete note X" → delete_note (moves to trash, confirm with user first if ambiguous)
+            - "Restore note" / "Undo delete" → list_trash to find ID → restore_note
+            - "Show trash" / "Recycle bin" → list_trash
+
+            ## Common Workflows
+
+            1. Answering knowledge questions:
+               retrieve(query) → read_note(doc_id) for full context → answer with citation
+            2. Creating a new note:
+               search(topic) to check existence → create_note(path, title, content)
+            3. Updating a note:
+               read_note(id) to get current content → update_note(id, new_content)
+            4. Deleting and restoring:
+               delete_note(id) moves to trash → list_trash to review → restore_note(id) to recover
+
+            ## Important Rules
+            - Prefer 'retrieve' over 'search' for open-ended questions (semantic > keyword).
+            - After retrieve, if a chunk looks relevant but incomplete, use read_note to get the full document.
+            - Never guess document IDs — always get them from tool results (list_notes, search, or retrieve).
+            - delete_note is a soft delete (trash). Notes can be restored with restore_note.
             """;
 
     private static final String COMPRESS_PROMPT = """
-            Summarize the following conversation concisely, preserving all key facts, decisions,
-            user preferences, and important context. Be specific - include names, numbers, and technical details.
-            Output only the summary, no preamble.
+            Summarize the following conversation concisely, preserving:
+            - All key facts, decisions, and user preferences
+            - Document IDs and paths that were referenced
+            - Technical details (names, numbers, configurations)
+            - What tools were called and their key results (not full output)
+            Omit verbose tool output details. Output only the summary, no preamble.
             """;
 
+    private static final int TOOL_RESULT_MAX_LENGTH = 500;
+
     private final MessageRepository messageRepository;
+    private final DocumentRepository documentRepository;
     private final AgentConfig agentConfig;
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
 
     public List<ChatMessage> buildContext(String conversationId) {
         List<ChatMessage> context = new ArrayList<>();
-        context.add(ChatMessage.system(SYSTEM_PROMPT));
 
-        // L2: global summary
+        // [Identity & Rules]
+        context.add(ChatMessage.system(IDENTITY_AND_RULES));
+
+        // [Tool Selection Guide & Workflows]
+        context.add(ChatMessage.system(TOOL_GUIDANCE));
+
+        // [Dynamic KB Overview] — injected so simple questions don't need tool calls
+        String kbOverview = buildKbOverview();
+        if (!kbOverview.isEmpty()) {
+            context.add(ChatMessage.system("[Knowledge Base Overview]\n" + kbOverview));
+        }
+
+        // [L2: Global Summary]
         List<Message> l2Messages = messageRepository
                 .findByConversationIdAndArchivedFalseAndLevelOrderByCreatedAtAsc(conversationId, 2);
         if (!l2Messages.isEmpty()) {
@@ -57,14 +103,14 @@ public class MemoryManager {
             context.add(ChatMessage.system("[Global Context Summary]\n" + l2.getContent()));
         }
 
-        // L1: recent summaries
+        // [L1: Recent Summaries]
         List<Message> l1Messages = messageRepository
                 .findByConversationIdAndArchivedFalseAndLevelOrderByCreatedAtAsc(conversationId, 1);
         for (Message l1 : l1Messages) {
             context.add(ChatMessage.system("[Recent Summary]\n" + l1.getContent()));
         }
 
-        // L0: raw messages
+        // [L0: Raw Messages]
         List<Message> l0Messages = messageRepository
                 .findByConversationIdAndArchivedFalseAndLevelOrderByCreatedAtAsc(conversationId, 0);
         for (Message msg : l0Messages) {
@@ -74,8 +120,31 @@ public class MemoryManager {
         return context;
     }
 
+    /**
+     * Build a compact overview of the knowledge base for injection into system prompt.
+     * Lists document count, paths and titles — enough for the model to answer
+     * "what's in the KB" without calling list_notes.
+     */
+    private String buildKbOverview() {
+        try {
+            List<Document> docs = documentRepository.findAll();
+            if (docs.isEmpty()) return "The knowledge base is empty.";
+
+            StringBuilder sb = new StringBuilder();
+            sb.append(String.format("%d documents:\n", docs.size()));
+            for (Document doc : docs) {
+                sb.append(String.format("- %s \"%s\" (id: %s)\n", doc.getPath(), doc.getTitle(), doc.getId()));
+            }
+            return sb.toString();
+        } catch (Exception e) {
+            log.warn("Failed to build KB overview", e);
+            return "";
+        }
+    }
+
+    // ── Step 4: Improved Compression ──
+
     public void compressIfNeeded(String conversationId) {
-        // Check L0
         List<Message> l0Messages = messageRepository
                 .findByConversationIdAndArchivedFalseAndLevelOrderByCreatedAtAsc(conversationId, 0);
 
@@ -85,7 +154,6 @@ public class MemoryManager {
             compressL0ToL1(conversationId, l0Messages);
         }
 
-        // Check L1
         long l1Count = messageRepository.countByConversationIdAndArchivedFalseAndLevel(conversationId, 1);
         if (l1Count > agentConfig.getMemory().getL1MaxCount()) {
             log.info("L1 count ({}) exceeded threshold, compressing to L2...", l1Count);
@@ -93,22 +161,32 @@ public class MemoryManager {
         }
     }
 
+    /**
+     * Improved L0→L1: compress by complete conversation rounds, not arbitrary split.
+     * A "round" is: user message + assistant response + any tool calls/results in between.
+     * We keep the most recent rounds and compress the older ones.
+     */
     private void compressL0ToL1(String conversationId, List<Message> l0Messages) {
-        // Take the older half of L0 messages
-        int splitPoint = l0Messages.size() / 2;
-        List<Message> toCompress = l0Messages.subList(0, splitPoint);
+        // Find split point at a user message boundary (keep recent complete rounds)
+        int splitPoint = findRoundBoundary(l0Messages);
+        if (splitPoint <= 0) return;
 
+        List<Message> toCompress = new ArrayList<>(l0Messages.subList(0, splitPoint));
         if (toCompress.isEmpty()) return;
 
-        // Build summary request
+        // Build summary — truncate tool results for compression input
         StringBuilder conversationText = new StringBuilder();
         for (Message msg : toCompress) {
-            conversationText.append(msg.getRole()).append(": ").append(msg.getContent()).append("\n\n");
+            String content = msg.getContent();
+            if ("tool".equals(msg.getRole()) && content != null && content.length() > TOOL_RESULT_MAX_LENGTH) {
+                content = content.substring(0, TOOL_RESULT_MAX_LENGTH) + "...[truncated]";
+            }
+            conversationText.append(msg.getRole()).append(": ")
+                    .append(content != null ? content : "[tool call]").append("\n\n");
         }
 
         String summary = callLlmForSummary(conversationText.toString());
 
-        // Save summary as L1 message
         Message l1 = Message.builder()
                 .id(UUID.randomUUID().toString())
                 .conversationId(conversationId)
@@ -118,20 +196,43 @@ public class MemoryManager {
                 .build();
         messageRepository.save(l1);
 
-        // Archive old L0 messages
         for (Message msg : toCompress) {
             msg.setArchived(true);
             messageRepository.save(msg);
         }
 
-        log.info("Compressed {} L0 messages into L1 summary", toCompress.size());
+        log.info("Compressed {} L0 messages into L1 summary (split at round boundary)", toCompress.size());
+    }
+
+    /**
+     * Find a split point that respects conversation round boundaries.
+     * Scans from the middle backward to find a "user" message start,
+     * ensuring we don't split in the middle of a tool call chain.
+     */
+    private int findRoundBoundary(List<Message> messages) {
+        int target = messages.size() / 2;
+
+        // Search backward from target to find a user message (start of a round)
+        for (int i = target; i > 0; i--) {
+            if ("user".equals(messages.get(i).getRole())) {
+                return i; // Split just before this user message
+            }
+        }
+
+        // Search forward if backward didn't find one
+        for (int i = target + 1; i < messages.size() - 1; i++) {
+            if ("user".equals(messages.get(i).getRole())) {
+                return i;
+            }
+        }
+
+        // Fallback to half
+        return target;
     }
 
     private void compressL1ToL2(String conversationId) {
         List<Message> l1Messages = messageRepository
                 .findByConversationIdAndArchivedFalseAndLevelOrderByCreatedAtAsc(conversationId, 1);
-
-        // Also include existing L2 if any
         List<Message> l2Messages = messageRepository
                 .findByConversationIdAndArchivedFalseAndLevelOrderByCreatedAtAsc(conversationId, 2);
 
@@ -145,7 +246,6 @@ public class MemoryManager {
 
         String globalSummary = callLlmForSummary(allSummaries.toString());
 
-        // Save new L2
         Message newL2 = Message.builder()
                 .id(UUID.randomUUID().toString())
                 .conversationId(conversationId)
@@ -155,7 +255,6 @@ public class MemoryManager {
                 .build();
         messageRepository.save(newL2);
 
-        // Archive old L1 and L2
         for (Message msg : l1Messages) {
             msg.setArchived(true);
             messageRepository.save(msg);
@@ -226,12 +325,11 @@ public class MemoryManager {
             case "system" -> ChatMessage.system(msg.getContent());
             default -> ChatMessage.user(msg.getContent());
         };
-        // Restore tool calls for assistant messages
         if ("assistant".equals(msg.getRole()) && msg.getToolCallsJson() != null) {
             try {
-                List<ToolCall> toolCalls = objectMapper.readValue(
+                List<ToolCall> tcs = objectMapper.readValue(
                         msg.getToolCallsJson(), new TypeReference<List<ToolCall>>() {});
-                cm.setToolCalls(toolCalls);
+                cm.setToolCalls(tcs);
             } catch (Exception e) {
                 log.warn("Failed to deserialize tool calls", e);
             }

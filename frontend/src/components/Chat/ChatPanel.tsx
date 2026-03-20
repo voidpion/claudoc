@@ -119,7 +119,7 @@ export default function ChatPanel({
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' && !e.shiftKey) {
+    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
       sendMessage();
     }
@@ -131,7 +131,7 @@ export default function ChatPanel({
       <div className="chat-messages">
         {messages.length === 0 && (
           <div className="chat-empty">
-            Ask me anything about the knowledge base.
+            Ask me anything about<br />the knowledge base.
           </div>
         )}
         {messages.map((msg) => (
@@ -168,7 +168,7 @@ function MessageBubble({ message }: { message: ChatMessage }) {
     return (
       <div className="message tool-message">
         <div className="tool-header" onClick={() => setExpanded(!expanded)}>
-          <span className="tool-icon">⚙</span>
+          <span className="tool-icon">⚡</span>
           <span className="tool-name">{message.toolName}</span>
           <span className="tool-toggle">{expanded ? '▼' : '▶'}</span>
         </div>
@@ -196,9 +196,6 @@ function MessageBubble({ message }: { message: ChatMessage }) {
 
   return (
     <div className={`message ${message.role}-message`}>
-      <div className="message-role">
-        {message.role === 'user' ? 'You' : 'Assistant'}
-      </div>
       <div className="message-content">
         {message.role === 'assistant' ? (
           <ReactMarkdown>{message.content}</ReactMarkdown>

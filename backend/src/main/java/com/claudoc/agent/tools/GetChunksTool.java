@@ -22,7 +22,9 @@ public class GetChunksTool implements AgentTool {
 
     @Override
     public String description() {
-        return "View the chunks of a specific document (useful for debugging RAG).";
+        return "View the text chunks of a specific document. For debugging RAG indexing — not for normal use. "
+                + "Use when: user wants to inspect how a document was split into chunks. "
+                + "Returns: JSON array of chunks with chunk_index, content, and content_length.";
     }
 
     @Override

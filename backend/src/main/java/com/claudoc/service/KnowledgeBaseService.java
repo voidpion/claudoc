@@ -10,6 +10,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
 
@@ -60,9 +61,34 @@ public class KnowledgeBaseService {
     public void deleteNote(String id) {
         Document doc = documentRepository.findById(id)
                 .orElseThrow(() -> new NoSuchElementException("Document not found: " + id));
+        // Soft delete: set deleted_at, remove from search index
         removeChunks(id);
+        doc.setDeletedAt(LocalDateTime.now());
+        documentRepository.save(doc);
+        log.info("Soft-deleted note: {}", doc.getPath());
+    }
+
+    @Transactional
+    public Document restoreNote(String id) {
+        Document doc = documentRepository.findDeletedById(id)
+                .orElseThrow(() -> new NoSuchElementException("Deleted document not found: " + id));
+        doc.setDeletedAt(null);
+        documentRepository.save(doc);
+        processChunks(doc);
+        log.info("Restored note: {}", doc.getPath());
+        return doc;
+    }
+
+    public List<Document> listTrash() {
+        return documentRepository.findByDeletedAtIsNotNull();
+    }
+
+    @Transactional
+    public void permanentDelete(String id) {
+        Document doc = documentRepository.findDeletedById(id)
+                .orElseThrow(() -> new NoSuchElementException("Deleted document not found: " + id));
         documentRepository.delete(doc);
-        log.info("Deleted note: {}", doc.getPath());
+        log.info("Permanently deleted note: {}", doc.getPath());
     }
 
     public Document getNote(String id) {

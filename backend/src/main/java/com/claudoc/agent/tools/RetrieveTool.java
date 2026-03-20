@@ -22,7 +22,11 @@ public class RetrieveTool implements AgentTool {
 
     @Override
     public String description() {
-        return "Semantic search: retrieve the most relevant chunks from the knowledge base using vector similarity.";
+        return "Semantic search: find the most relevant text chunks using vector similarity. "
+                + "Use when: user asks a question about a topic and you need to find related information by meaning (not exact keyword). "
+                + "This is the primary tool for answering knowledge questions. Prefer this over 'search' for open-ended queries. "
+                + "After getting results, use 'read_note' with the doc_id to get full document context if needed. "
+                + "Returns: JSON array of chunks with doc_id, doc_path, doc_title, chunk_content, and similarity score.";
     }
 
     @Override

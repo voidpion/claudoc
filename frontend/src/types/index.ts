@@ -12,6 +12,7 @@ export interface Document {
   content: string;
   createdAt: string;
   updatedAt: string;
+  deletedAt?: string | null;
 }
 
 export interface Conversation {

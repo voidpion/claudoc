@@ -25,3 +25,18 @@ export async function fetchConversations(): Promise<Conversation[]> {
   const res = await fetch(`${BASE}/conversations`);
   return res.json();
 }
+
+// Trash APIs
+export async function fetchTrash(): Promise<Document[]> {
+  const res = await fetch(`${BASE}/trash`);
+  return res.json();
+}
+
+export async function restoreNote(id: string): Promise<Document> {
+  const res = await fetch(`${BASE}/trash/${id}/restore`, { method: 'POST' });
+  return res.json();
+}
+
+export async function permanentDeleteNote(id: string): Promise<void> {
+  await fetch(`${BASE}/trash/${id}`, { method: 'DELETE' });
+}

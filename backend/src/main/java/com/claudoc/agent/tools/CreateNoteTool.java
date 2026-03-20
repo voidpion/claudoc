@@ -19,7 +19,10 @@ public class CreateNoteTool implements AgentTool {
 
     @Override
     public String description() {
-        return "Create a new note in the knowledge base. Use path prefix '/_memory/' for agent memory notes.";
+        return "Create a new note in the knowledge base. "
+                + "Use when: user asks to write/create a new document. Always search first to avoid duplicates. "
+                + "Path format: '/notes/topic/name.md' for regular notes, '/_memory/name.md' for agent memory. "
+                + "Returns: confirmation with doc ID and path.";
     }
 
     @Override

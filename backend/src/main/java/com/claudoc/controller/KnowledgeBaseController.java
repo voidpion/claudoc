@@ -91,4 +91,30 @@ public class KnowledgeBaseController {
     public List<Chunk> getChunks(@PathVariable String id) {
         return knowledgeBaseService.getChunks(id);
     }
+
+    // ── Trash endpoints ──
+
+    @GetMapping("/trash")
+    public List<Document> listTrash() {
+        return knowledgeBaseService.listTrash();
+    }
+
+    @PostMapping("/trash/{id}/restore")
+    public ResponseEntity<Document> restoreNote(@PathVariable String id) {
+        try {
+            return ResponseEntity.ok(knowledgeBaseService.restoreNote(id));
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    @DeleteMapping("/trash/{id}")
+    public ResponseEntity<Void> permanentDelete(@PathVariable String id) {
+        try {
+            knowledgeBaseService.permanentDelete(id);
+            return ResponseEntity.ok().build();
+        } catch (Exception e) {
+            return ResponseEntity.notFound().build();
+        }
+    }
 }
