@@ -1,0 +1,42 @@
+server:
+  port: 7070
+
+spring:
+  datasource:
+    url: jdbc:h2:mem:claudoc
+    driver-class-name: org.h2.Driver
+    username: sa
+    password:
+  h2:
+    console:
+      enabled: true
+      path: /h2-console
+  jpa:
+    hibernate:
+      ddl-auto: none
+    show-sql: false
+  sql:
+    init:
+      mode: always
+
+# LLM Configuration
+llm:
+  provider: anthropic
+  base-url: https://api.moonshot.cn/anthropic
+  api-key: REDACTED_KEY
+  model: moonshot-v1-8k
+  max-tokens: 4096
+  temperature: 0.7
+  user-agent: claude-cli/2.1.80
+  anthropic-version: "2023-06-01"
+
+# Agent Configuration
+agent:
+  memory:
+    l0-max-tokens: 4000
+    l1-max-count: 5
+  retrieve:
+    default-top-k: 5
+  chunking:
+    max-chunk-size: 500
+    overlap-sentences: 1
