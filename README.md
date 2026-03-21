@@ -960,10 +960,52 @@ List<String> findAllPaths();
 | `content` | `{"text": "Hello "}` | LLM 生成的文本片段 |
 | `tool_call` | `{"id": "...", "name": "retrieve", "arguments": "..."}` | 工具调用 |
 | `tool_result` | `{"tool_call_id": "...", "name": "retrieve", "result": "..."}` | 工具执行结果 |
+| `ui_sync` | `{"refresh": ["tree", "document"], "documentId": "abc"}` | UI 同步通知 |
 | `done` | `{}` | 流结束 |
 | `error` | `{"error": "message"}` | 错误 |
 
 **content 事件使用 JSON 包装**的原因：SSE 规范中 `data:` 后的内容会被 `trim()`，导致 LLM 输出的前导/尾随空格丢失（如 `" How"` 变成 `"How"`）。通过 `{"text": " How "}` 包装，空白字符被 JSON 字符串保护。
+
+### UI 同步机制（ui_sync）
+
+Agent 通过工具修改知识库后（创建、更新、删除、恢复笔记），后端自动发送 `ui_sync` 事件通知前端刷新对应的 UI 区域。
+
+**后端：工具→刷新目标映射（`AgentLoop.TOOL_REFRESH_MAP`）**
+
+| 工具 | 刷新目标 |
+|------|---------|
+| `create_note` | `["tree"]` |
+| `update_note` | `["tree", "document"]` |
+| `delete_note` | `["tree", "trash"]` |
+| `restore_note` | `["tree", "trash"]` |
+| `list_trash` | `["trash"]` |
+
+工具执行后，`AgentLoop` 根据映射表构建 `ui_sync` 事件：
+
+```java
+List<String> refreshTargets = TOOL_REFRESH_MAP.get(toolName);
+if (refreshTargets != null) {
+    Map<String, Object> syncData = new HashMap<>();
+    syncData.put("refresh", refreshTargets);
+    if (args.containsKey("id")) {
+        syncData.put("documentId", args.get("id"));
+    }
+    emitter.send(SseEmitter.event().name("ui_sync").data(...));
+}
+```
+
+**前端：精确刷新**
+
+`App.tsx` 中的 `handleUiSync` 根据 `refresh` 数组决定刷新什么：
+
+- `tree` → 重新加载文件树（`fetchTree()`）
+- `document` → 如果 `documentId` 等于当前打开的文档，重新加载文档内容
+- `trash` → 递增 `trashVersion`，触发 FileTree 中回收站列表的重新加载
+
+**设计要点：**
+- **后端决定刷新什么**，前端不需要维护"哪些工具会改数据"的硬编码列表
+- **精确刷新**而非全量刷新——`update_note` 只在用户正好在看那篇文档时才重载内容
+- **未来扩展零成本**——新增工具时只需在 `TOOL_REFRESH_MAP` 加一行，前端无需改动
 
 ### 前端 SSE 解析
 

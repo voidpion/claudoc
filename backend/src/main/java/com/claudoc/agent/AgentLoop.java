@@ -20,6 +20,15 @@ public class AgentLoop {
 
     private static final int MAX_TOOL_ITERATIONS = 10;
 
+    /** Tools that modify the knowledge base and require UI refresh. */
+    private static final Map<String, List<String>> TOOL_REFRESH_MAP = Map.of(
+            "create_note",   List.of("tree"),
+            "update_note",   List.of("tree", "document"),
+            "delete_note",   List.of("tree", "trash"),
+            "restore_note",  List.of("tree", "trash"),
+            "list_trash",    List.of("trash")
+    );
+
     private final LlmClient llmClient;
     private final ToolRegistry toolRegistry;
     private final MemoryManager memoryManager;
@@ -128,6 +137,20 @@ public class AgentLoop {
                                     "name", toolName,
                                     "result", result
                             ))));
+
+                    // Send ui_sync event if the tool modifies data
+                    List<String> refreshTargets = TOOL_REFRESH_MAP.get(toolName);
+                    if (refreshTargets != null) {
+                        Map<String, Object> syncData = new HashMap<>();
+                        syncData.put("refresh", refreshTargets);
+                        // For update_note, include documentId so frontend can refresh if viewing it
+                        if (args.containsKey("id")) {
+                            syncData.put("documentId", args.get("id"));
+                        }
+                        emitter.send(SseEmitter.event()
+                                .name("ui_sync")
+                                .data(objectMapper.writeValueAsString(syncData)));
+                    }
 
                     // Save tool result as message
                     memoryManager.saveMessage(conversationId, "tool", result, tc.getId(), toolName);

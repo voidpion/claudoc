@@ -1,9 +1,15 @@
 import type { ToolCallEvent, ToolResultEvent } from '../types';
 
+export interface UiSyncEvent {
+  refresh: string[];
+  documentId?: string;
+}
+
 export interface StreamCallbacks {
   onContent: (text: string) => void;
   onToolCall: (tc: ToolCallEvent) => void;
   onToolResult: (tr: ToolResultEvent) => void;
+  onUiSync?: (sync: UiSyncEvent) => void;
   onDone: () => void;
   onError: (error: string) => void;
 }
@@ -136,6 +142,11 @@ function handleEvent(event: string, data: string, callbacks: StreamCallbacks) {
     case 'tool_result':
       try {
         callbacks.onToolResult(JSON.parse(data));
+      } catch {}
+      break;
+    case 'ui_sync':
+      try {
+        if (callbacks.onUiSync) callbacks.onUiSync(JSON.parse(data));
       } catch {}
       break;
     case 'done':

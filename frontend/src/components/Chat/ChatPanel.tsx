@@ -1,19 +1,19 @@
 import { useState, useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import type { ChatMessage } from '../../types';
-import { streamChatSSE } from '../../services/sse';
+import { streamChatSSE, type UiSyncEvent } from '../../services/sse';
 import './ChatPanel.css';
 
 interface Props {
   conversationId: string | null;
   onConversationCreated: (id: string) => void;
-  onNoteChanged: () => void;
+  onUiSync: (sync: UiSyncEvent) => void;
 }
 
 export default function ChatPanel({
   conversationId,
   onConversationCreated,
-  onNoteChanged,
+  onUiSync,
 }: Props) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -92,10 +92,9 @@ export default function ChatPanel({
               : m,
           ),
         );
-        // Check if note was modified
-        if (['create_note', 'update_note', 'delete_note'].includes(tr.name)) {
-          onNoteChanged();
-        }
+      },
+      onUiSync: (sync) => {
+        onUiSync(sync);
       },
       onDone: () => {
         setMessages((prev) =>

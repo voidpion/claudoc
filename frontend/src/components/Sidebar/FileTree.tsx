@@ -8,6 +8,7 @@ interface Props {
   selectedId: string | null;
   onSelect: (id: string) => void;
   onRefresh: () => void;
+  trashVersion?: number;
 }
 
 function TreeItem({
@@ -65,7 +66,7 @@ function TreeItem({
   );
 }
 
-export default function FileTree({ tree, selectedId, onSelect, onRefresh }: Props) {
+export default function FileTree({ tree, selectedId, onSelect, onRefresh, trashVersion }: Props) {
   const [trashExpanded, setTrashExpanded] = useState(false);
   const [trashItems, setTrashItems] = useState<Document[]>([]);
   const [trashLoading, setTrashLoading] = useState(false);
@@ -86,6 +87,13 @@ export default function FileTree({ tree, selectedId, onSelect, onRefresh }: Prop
       loadTrash();
     }
   }, [trashExpanded]);
+
+  // Reload trash when trashVersion changes (triggered by ui_sync from agent)
+  useEffect(() => {
+    if (trashExpanded && trashVersion) {
+      loadTrash();
+    }
+  }, [trashVersion]);
 
   const handleRestore = async (id: string) => {
     try {
