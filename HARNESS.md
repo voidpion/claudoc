@@ -15,6 +15,7 @@
 - [7. 记忆压缩的可靠性](#7-记忆压缩的可靠性)
 - [8. 优先级排序](#8-优先级排序)
 - [9. 记忆维护方案](#9-记忆维护方案)
+- [10. 上下文组装策略](#10-上下文组装策略)
 
 ---
 
@@ -224,3 +225,56 @@ Rules:
 ### 与其他工具的协作
 
 记忆写入可以和其他 tool_call 在同一轮中并行执行。记忆更新依赖先读后写，由 LLM 在多轮 agent loop 中自行编排，不需要后端做特殊处理。
+
+---
+
+## 10. 上下文组装策略
+
+### 设计决策：独立 messages 数组 vs 合并为大文本
+
+当前采用 LLM API 原生的 `messages[]` 数组格式，每条消息保持独立的 role 标记。**不将对话历史合并为一个大的 JSON 文本塞进 system prompt。**
+
+选择 `messages[]` 的原因：
+
+#### 1. 角色语义
+
+LLM API 按 role 区分说话人，模型内部对不同 role 的处理权重不同。`user`、`assistant`、`tool` 三种角色有明确的语义边界。合并成一个大文本串，模型无法区分谁说了什么。
+
+#### 2. Tool Call 配对
+
+工具调用依赖结构化的 `tool_call_id` 引用链：
+
+```
+assistant → tool_calls: [{id: "tc_1", name: "search", ...}]
+tool      → tool_call_id: "tc_1", content: "结果..."
+```
+
+这个配对关系是 API 协议层的，合并成文本会丢失。
+
+#### 3. Role 优先级（Instruction Hierarchy）
+
+模型在训练时学到了隐含的优先级层次：
+
+```
+system（开发者指令）> user（用户输入）> assistant（自己之前说的）
+```
+
+安全规则、身份设定等指令放在 `system` role 时，模型更倾向于坚守规则。如果只是拼成文本混在 user 消息里，同一优先级的后续 user 消息更容易覆盖它，削弱 prompt injection 防护。
+
+### Role Marker 开销
+
+每条消息有约 3-4 tokens 的固定开销（角色标记、消息分隔符等）。当前 4-6 条 system 消息约 16-24 tokens 开销，对 8000 token 的上下文窗口来说可以忽略。
+
+如需优化，可将多条 system 消息合并为 1-2 条（静态部分合并、动态部分合并），但 L0 的 user/assistant/tool 消息必须保持独立的 messages 结构。
+
+### 当前上下文分层结构
+
+```
+messages[0]   system    身份 + 规则 + 记忆管理（IDENTITY_AND_RULES）
+messages[1]   system    工具选择指南 + 工作流（TOOL_GUIDANCE）
+messages[2]   system    [Knowledge Base Overview] — 动态注入的 KB 概览
+messages[3]   system    [Recent User Actions] — UI 上下文
+messages[4]   system    [Global Context Summary] — L2 全局摘要（如果有）
+messages[5]   system    [Recent Summary] — L1 近期摘要（如果有，可多条）
+messages[6+]  user/assistant/tool  L0 原始对话消息（在 token 预算内从新往旧填充）
+```
