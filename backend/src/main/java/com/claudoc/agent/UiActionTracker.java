@@ -35,7 +35,7 @@ public class UiActionTracker {
 
     /** Format recent actions as a readable string for system prompt injection. */
     public synchronized String format() {
-        if (actions.isEmpty()) return "";
+        if (actions.isEmpty()) return "## Recent User Actions\nNo recent actions. The user has not opened any document or performed any operation yet.\n";
 
         StringBuilder sb = new StringBuilder("## Recent User Actions\n");
         for (UiAction a : actions) {

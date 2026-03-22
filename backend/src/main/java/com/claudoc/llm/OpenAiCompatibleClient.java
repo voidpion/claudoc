@@ -42,12 +42,13 @@ public class OpenAiCompatibleClient implements LlmClient {
             ObjectNode requestBody = buildRequestBody(messages, tools);
             log.debug("LLM request: {}", requestBody.toString());
 
+            StreamState state = new StreamState();
             webClient.post()
                     .uri("/chat/completions")
                     .bodyValue(requestBody.toString())
                     .retrieve()
                     .bodyToFlux(String.class)
-                    .doOnNext(line -> processSSELine(line, sink))
+                    .doOnNext(line -> processSSELine(line, sink, state))
                     .doOnComplete(() -> sink.tryEmitComplete())
                     .doOnError(e -> {
                         log.error("LLM stream error", e);
@@ -106,19 +107,24 @@ public class OpenAiCompatibleClient implements LlmClient {
         return body;
     }
 
-    // Accumulated state for streaming tool calls
-    private final Map<Integer, ToolCall> pendingToolCalls = new HashMap<>();
+    /**
+     * Per-request SSE parsing state. Each chatStream call creates its own instance,
+     * avoiding shared mutable state on the singleton bean.
+     */
+    private static class StreamState {
+        final Map<Integer, ToolCall> pendingToolCalls = new HashMap<>();
+    }
 
-    private void processSSELine(String rawLine, Sinks.Many<LlmResponseChunk> sink) {
+    private void processSSELine(String rawLine, Sinks.Many<LlmResponseChunk> sink, StreamState state) {
         for (String line : rawLine.split("\n")) {
             line = line.trim();
             if (line.isEmpty() || line.equals("data: [DONE]")) {
                 if (line.equals("data: [DONE]")) {
                     // Emit any pending tool calls
-                    for (ToolCall tc : pendingToolCalls.values()) {
+                    for (ToolCall tc : state.pendingToolCalls.values()) {
                         sink.tryEmitNext(LlmResponseChunk.toolCall(tc));
                     }
-                    pendingToolCalls.clear();
+                    state.pendingToolCalls.clear();
                     sink.tryEmitNext(LlmResponseChunk.done());
                 }
                 return;
@@ -147,7 +153,7 @@ public class OpenAiCompatibleClient implements LlmClient {
                 if (delta.has("tool_calls")) {
                     for (JsonNode tcDelta : delta.get("tool_calls")) {
                         int index = tcDelta.get("index").asInt();
-                        ToolCall existing = pendingToolCalls.get(index);
+                        ToolCall existing = state.pendingToolCalls.get(index);
 
                         if (existing == null) {
                             existing = ToolCall.builder()
@@ -158,7 +164,7 @@ public class OpenAiCompatibleClient implements LlmClient {
                                             .arguments("")
                                             .build())
                                     .build();
-                            pendingToolCalls.put(index, existing);
+                            state.pendingToolCalls.put(index, existing);
                         }
 
                         if (tcDelta.has("id")) {

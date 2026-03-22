@@ -1,24 +1,20 @@
 package com.claudoc.agent;
 
 import com.claudoc.agent.memory.MemoryManager;
+import com.claudoc.config.AgentConfig;
 import com.claudoc.llm.*;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.*;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.*;
 
 @Component
-@RequiredArgsConstructor
 @Slf4j
 public class AgentLoop {
-
-    private static final int MAX_TOOL_ITERATIONS = 10;
 
     /** Tools that modify the knowledge base and require UI refresh. */
     private static final Map<String, List<String>> TOOL_REFRESH_MAP = Map.of(
@@ -33,8 +29,29 @@ public class AgentLoop {
     private final ToolRegistry toolRegistry;
     private final MemoryManager memoryManager;
     private final ObjectMapper objectMapper;
+    private final int maxIterations;
 
-    private final ExecutorService executor = Executors.newCachedThreadPool();
+    private final ExecutorService executor;
+
+    public AgentLoop(LlmClient llmClient, ToolRegistry toolRegistry,
+                     MemoryManager memoryManager, ObjectMapper objectMapper,
+                     AgentConfig agentConfig) {
+        this.llmClient = llmClient;
+        this.toolRegistry = toolRegistry;
+        this.memoryManager = memoryManager;
+        this.objectMapper = objectMapper;
+        this.maxIterations = agentConfig.getLoop().getMaxIterations();
+
+        int maxConcurrent = agentConfig.getLoop().getMaxConcurrent();
+        this.executor = new ThreadPoolExecutor(
+                2, maxConcurrent,
+                60L, TimeUnit.SECONDS,
+                new LinkedBlockingQueue<>(maxConcurrent * 2),
+                new ThreadPoolExecutor.CallerRunsPolicy()
+        );
+        log.info("AgentLoop initialized: maxConcurrent={}, toolTimeout={}s, maxIterations={}",
+                maxConcurrent, agentConfig.getLoop().getToolTimeoutSeconds(), maxIterations);
+    }
 
     public void run(String conversationId, String userMessage, SseEmitter emitter) {
         executor.submit(() -> {
@@ -61,7 +78,7 @@ public class AgentLoop {
         memoryManager.saveMessage(conversationId, "user", userMessage, null, null);
 
         int iteration = 0;
-        while (iteration < MAX_TOOL_ITERATIONS) {
+        while (iteration < maxIterations) {
             iteration++;
 
             // Build context
@@ -164,7 +181,7 @@ public class AgentLoop {
             break;
         }
 
-        if (iteration >= MAX_TOOL_ITERATIONS) {
+        if (iteration >= maxIterations) {
             emitter.send(SseEmitter.event()
                     .name("content")
                     .data("\n\n[Reached maximum tool iterations]"));

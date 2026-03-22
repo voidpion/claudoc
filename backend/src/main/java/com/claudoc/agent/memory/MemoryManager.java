@@ -2,6 +2,7 @@ package com.claudoc.agent.memory;
 
 import com.claudoc.agent.UiActionTracker;
 import com.claudoc.config.AgentConfig;
+import com.claudoc.config.LlmConfig;
 import com.claudoc.llm.ChatMessage;
 import com.claudoc.llm.LlmClient;
 import com.claudoc.llm.LlmResponseChunk;
@@ -71,6 +72,14 @@ public class MemoryManager {
             - After retrieve, if a chunk looks relevant but incomplete, use read_note to get the full document.
             - Never guess document IDs — always get them from tool results (list_notes, search, or retrieve).
             - delete_note is a soft delete (trash). Notes can be restored with restore_note.
+
+            ## Disambiguation — Ask Before Acting
+            When in doubt, ASK the user instead of guessing. Respond with a clarifying question (no tool call) in these cases:
+            - Ambiguous target: "delete that note" but multiple candidates match — list them and ask which one.
+            - Missing required info: "create a note" without path/title/content — ask what they want to write.
+            - Destructive actions: before deleting, confirm with the user which document to delete, especially when search returns multiple results.
+            - Vague queries: "help me find that thing" — ask the user to be more specific.
+            Do NOT over-confirm: if the user's intent is clear and unambiguous (e.g., "delete /notes/todo.md"), just do it.
             """;
 
     private static final String COMPRESS_PROMPT = """
@@ -84,10 +93,13 @@ public class MemoryManager {
 
     private static final int TOOL_RESULT_MAX_LENGTH = 500;
 
+    private static final int COMPRESS_MAX_RETRIES = 2;
+
     private final MessageRepository messageRepository;
     private final DocumentRepository documentRepository;
     private final UiActionTracker uiActionTracker;
     private final AgentConfig agentConfig;
+    private final LlmConfig llmConfig;
     private final LlmClient llmClient;
     private final ObjectMapper objectMapper;
 
@@ -127,11 +139,38 @@ public class MemoryManager {
             context.add(ChatMessage.system("[Recent Summary]\n" + l1.getContent()));
         }
 
-        // [L0: Raw Messages]
+        // [L0: Raw Messages] — with hard cap to prevent context overflow
         List<Message> l0Messages = messageRepository
                 .findByConversationIdAndArchivedFalseAndLevelOrderByCreatedAtAsc(conversationId, 0);
-        for (Message msg : l0Messages) {
-            context.add(toChatMessage(msg));
+
+        // Reserve tokens for system prompt layers already added + LLM output
+        int usedTokens = estimateContextTokens(context);
+        int maxL0Tokens = llmConfig.getContextWindow() - usedTokens - llmConfig.getMaxTokens();
+
+        if (maxL0Tokens > 0) {
+            // Add L0 messages from newest to oldest, respecting the budget
+            List<Message> fittingMessages = new ArrayList<>();
+            int runningTokens = 0;
+            for (int i = l0Messages.size() - 1; i >= 0; i--) {
+                Message msg = l0Messages.get(i);
+                int msgTokens = msg.getContent() == null ? 10 : estimateStringTokens(msg.getContent()) + 10;
+                if (runningTokens + msgTokens > maxL0Tokens) {
+                    break;
+                }
+                fittingMessages.add(msg);
+                runningTokens += msgTokens;
+            }
+            Collections.reverse(fittingMessages);
+
+            if (fittingMessages.size() < l0Messages.size()) {
+                log.warn("Context hard cap: trimmed L0 from {} to {} messages (budget: {} tokens)",
+                        l0Messages.size(), fittingMessages.size(), maxL0Tokens);
+            }
+            for (Message msg : fittingMessages) {
+                context.add(toChatMessage(msg));
+            }
+        } else {
+            log.warn("No token budget left for L0 messages (system layers used {} tokens)", usedTokens);
         }
 
         return context;
@@ -291,13 +330,27 @@ public class MemoryManager {
                 ChatMessage.user(text)
         );
 
-        StringBuilder summary = new StringBuilder();
-        llmClient.chatStream(messages, null)
-                .filter(chunk -> chunk.getType() == LlmResponseChunk.Type.CONTENT)
-                .doOnNext(chunk -> summary.append(chunk.getContent()))
-                .blockLast();
+        for (int attempt = 1; attempt <= COMPRESS_MAX_RETRIES; attempt++) {
+            try {
+                StringBuilder summary = new StringBuilder();
+                llmClient.chatStream(messages, null)
+                        .filter(chunk -> chunk.getType() == LlmResponseChunk.Type.CONTENT)
+                        .doOnNext(chunk -> summary.append(chunk.getContent()))
+                        .blockLast();
+                if (!summary.isEmpty()) {
+                    return summary.toString();
+                }
+                log.warn("Compression attempt {}/{} returned empty summary", attempt, COMPRESS_MAX_RETRIES);
+            } catch (Exception e) {
+                log.warn("Compression attempt {}/{} failed: {}", attempt, COMPRESS_MAX_RETRIES, e.getMessage());
+            }
+        }
 
-        return summary.toString();
+        // Fallback: mechanical truncation instead of LLM summary
+        log.warn("All compression attempts failed, falling back to truncation");
+        int maxLen = 500;
+        if (text.length() <= maxLen) return text;
+        return text.substring(0, maxLen) + "\n...[truncated due to compression failure]";
     }
 
     public void saveMessage(String conversationId, String role, String content,
@@ -328,9 +381,36 @@ public class MemoryManager {
         messageRepository.save(msg);
     }
 
+    /**
+     * Estimate token count with CJK-aware heuristic.
+     * CJK characters ≈ 1.5 chars/token, non-CJK ≈ 4 chars/token.
+     */
     private int estimateTokens(List<Message> messages) {
         return messages.stream()
-                .mapToInt(m -> m.getContent() == null ? 0 : m.getContent().length() / 4)
+                .mapToInt(m -> m.getContent() == null ? 0 : estimateStringTokens(m.getContent()))
+                .sum();
+    }
+
+    static int estimateStringTokens(String text) {
+        int cjkChars = 0;
+        int otherChars = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.UnicodeScript.of(c) == Character.UnicodeScript.HAN
+                    || Character.UnicodeScript.of(c) == Character.UnicodeScript.HIRAGANA
+                    || Character.UnicodeScript.of(c) == Character.UnicodeScript.KATAKANA) {
+                cjkChars++;
+            } else {
+                otherChars++;
+            }
+        }
+        // CJK: ~1.5 chars per token; non-CJK: ~4 chars per token
+        return (int) (cjkChars / 1.5 + otherChars / 4.0);
+    }
+
+    private int estimateContextTokens(List<ChatMessage> context) {
+        return context.stream()
+                .mapToInt(m -> m.getContent() == null ? 0 : estimateStringTokens(m.getContent()))
                 .sum();
     }
 

@@ -194,11 +194,11 @@
   font-size: 11px;
   color: var(--text-muted);
   overflow-x: auto;
-  max-height: 200px;
+  max-height: 400px;
   overflow-y: auto;
   margin: 0;
   white-space: pre-wrap;
-  word-break: break-all;
+  word-break: break-word;
   border: 1px solid var(--bg-surface);
 }
 

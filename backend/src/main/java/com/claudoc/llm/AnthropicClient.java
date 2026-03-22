@@ -72,9 +72,10 @@ public class AnthropicClient implements LlmClient {
 
                         try (BufferedReader reader = new BufferedReader(
                                 new InputStreamReader(response.body(), StandardCharsets.UTF_8))) {
+                            StreamState state = new StreamState();
                             String line;
                             while ((line = reader.readLine()) != null) {
-                                processSSELine(line, sink);
+                                processSSELine(line, sink, state);
                             }
                             sink.tryEmitComplete();
                         } catch (Exception e) {
@@ -233,12 +234,17 @@ public class AnthropicClient implements LlmClient {
         };
     }
 
-    // State for accumulating streaming tool use blocks
-    private final Map<Integer, ToolCall> pendingToolCalls = Collections.synchronizedMap(new HashMap<>());
-    private int currentBlockIndex = -1;
-    private String currentBlockType = null;
+    /**
+     * Per-request SSE parsing state. Each chatStream call creates its own instance,
+     * avoiding shared mutable state on the singleton bean.
+     */
+    private static class StreamState {
+        final Map<Integer, ToolCall> pendingToolCalls = new HashMap<>();
+        int currentBlockIndex = -1;
+        String currentBlockType = null;
+    }
 
-    private void processSSELine(String line, Sinks.Many<LlmResponseChunk> sink) {
+    private void processSSELine(String line, Sinks.Many<LlmResponseChunk> sink, StreamState state) {
         line = line.trim();
         if (line.isEmpty()) return;
 
@@ -247,11 +253,11 @@ public class AnthropicClient implements LlmClient {
             String event = line.substring(6).trim();
             if ("message_stop".equals(event)) {
                 // Emit pending tool calls
-                for (ToolCall tc : pendingToolCalls.values()) {
+                for (ToolCall tc : state.pendingToolCalls.values()) {
                     sink.tryEmitNext(LlmResponseChunk.toolCall(tc));
                 }
-                pendingToolCalls.clear();
-                currentBlockIndex = -1;
+                state.pendingToolCalls.clear();
+                state.currentBlockIndex = -1;
                 sink.tryEmitNext(LlmResponseChunk.done());
             }
             return;
@@ -267,11 +273,11 @@ public class AnthropicClient implements LlmClient {
 
             switch (type) {
                 case "content_block_start" -> {
-                    currentBlockIndex = node.get("index").asInt();
+                    state.currentBlockIndex = node.get("index").asInt();
                     JsonNode contentBlock = node.get("content_block");
-                    currentBlockType = contentBlock.get("type").asText();
+                    state.currentBlockType = contentBlock.get("type").asText();
 
-                    if ("tool_use".equals(currentBlockType)) {
+                    if ("tool_use".equals(state.currentBlockType)) {
                         ToolCall tc = ToolCall.builder()
                                 .id(contentBlock.get("id").asText())
                                 .type("function")
@@ -280,7 +286,7 @@ public class AnthropicClient implements LlmClient {
                                         .arguments("")
                                         .build())
                                 .build();
-                        pendingToolCalls.put(currentBlockIndex, tc);
+                        state.pendingToolCalls.put(state.currentBlockIndex, tc);
                     }
                 }
                 case "content_block_delta" -> {
@@ -294,7 +300,7 @@ public class AnthropicClient implements LlmClient {
                         }
                     } else if ("input_json_delta".equals(deltaType)) {
                         String partialJson = delta.get("partial_json").asText();
-                        ToolCall tc = pendingToolCalls.get(currentBlockIndex);
+                        ToolCall tc = state.pendingToolCalls.get(state.currentBlockIndex);
                         if (tc != null) {
                             tc.getFunction().setArguments(
                                     tc.getFunction().getArguments() + partialJson);
@@ -302,7 +308,7 @@ public class AnthropicClient implements LlmClient {
                     }
                 }
                 case "content_block_stop" -> {
-                    currentBlockType = null;
+                    state.currentBlockType = null;
                 }
                 // message_start, message_delta, ping — ignore
             }

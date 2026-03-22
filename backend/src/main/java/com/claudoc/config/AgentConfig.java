@@ -12,6 +12,7 @@ public class AgentConfig {
     private MemoryConfig memory = new MemoryConfig();
     private RetrieveConfig retrieve = new RetrieveConfig();
     private ChunkingConfig chunking = new ChunkingConfig();
+    private LoopConfig loop = new LoopConfig();
 
     @Data
     public static class MemoryConfig {
@@ -28,5 +29,15 @@ public class AgentConfig {
     public static class ChunkingConfig {
         private int maxChunkSize = 500;
         private int overlapSentences = 1;
+    }
+
+    @Data
+    public static class LoopConfig {
+        /** Maximum concurrent agent loops */
+        private int maxConcurrent = 5;
+        /** Tool execution timeout in seconds */
+        private int toolTimeoutSeconds = 30;
+        /** Maximum tool call iterations per request */
+        private int maxIterations = 10;
     }
 }
