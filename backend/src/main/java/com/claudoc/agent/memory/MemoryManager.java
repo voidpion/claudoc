@@ -50,6 +50,7 @@ public class MemoryManager {
             - ALWAYS read_note the target file before writing, to check existing content.
             - UPDATE existing entries (update_note) instead of duplicating. Append only if it's new info.
             - NEVER create other files under /_memory/. Only these three files exist.
+            - NEVER delete memory files. Files under /_memory/ are protected and must not be deleted.
             - DO NOT save casual chat, greetings, or ephemeral information.
             - Each entry must include a date tag: [YYYY-MM-DD]
             """;

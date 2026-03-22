@@ -19,11 +19,19 @@ export default function ChatPanel({
   const [input, setInput] = useState('');
   const [isStreaming, setIsStreaming] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Auto-focus input on mount and after streaming ends
+  useEffect(() => {
+    if (!isStreaming) {
+      inputRef.current?.focus();
+    }
+  }, [isStreaming]);
 
   const sendMessage = async () => {
     if (!input.trim() || isStreaming) return;
@@ -140,7 +148,9 @@ export default function ChatPanel({
       </div>
       <div className="chat-input-area">
         <textarea
+          ref={inputRef}
           className="chat-input"
+          autoFocus
           value={input}
           onChange={(e) => setInput(e.target.value)}
           onKeyDown={handleKeyDown}

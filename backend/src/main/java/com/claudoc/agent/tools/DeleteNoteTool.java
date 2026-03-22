@@ -1,6 +1,7 @@
 package com.claudoc.agent.tools;
 
 import com.claudoc.agent.AgentTool;
+import com.claudoc.model.Document;
 import com.claudoc.service.KnowledgeBaseService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -10,6 +11,8 @@ import java.util.Map;
 @Component
 @RequiredArgsConstructor
 public class DeleteNoteTool implements AgentTool {
+
+    private static final String PROTECTED_PREFIX = "/_memory/";
 
     private final KnowledgeBaseService knowledgeBaseService;
 
@@ -38,7 +41,13 @@ public class DeleteNoteTool implements AgentTool {
     @Override
     public String execute(Map<String, Object> args) {
         try {
-            knowledgeBaseService.deleteNote((String) args.get("id"));
+            String id = (String) args.get("id");
+            Document doc = knowledgeBaseService.getNote(id);
+            if (doc.getPath() != null && doc.getPath().startsWith(PROTECTED_PREFIX)) {
+                return "Error: cannot delete memory file '" + doc.getPath()
+                        + "'. Memory notes are protected and cannot be deleted.";
+            }
+            knowledgeBaseService.deleteNote(id);
             return "Note moved to trash. It can be restored with restore_note.";
         } catch (Exception e) {
             return "Error: " + e.getMessage();
