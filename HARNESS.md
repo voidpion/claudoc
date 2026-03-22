@@ -14,6 +14,7 @@
 - [6. 成本控制](#6-成本控制)
 - [7. 记忆压缩的可靠性](#7-记忆压缩的可靠性)
 - [8. 优先级排序](#8-优先级排序)
+- [9. 记忆维护方案](#9-记忆维护方案)
 
 ---
 
@@ -145,3 +146,81 @@ CJK（Chinese, Japanese, Korean）感知方案：遍历文本字符，识别 CJK
 | **额外** | UI 上下文空状态 | UiActionTracker 空时注入"无操作"提示，防止 LLM 瞎猜 | ✅ 已修复 |
 
 P0-P2 是基本的工程质量保障，P3 是 Agent 系统特有的评估基础设施，P4-P7 是生产化必须的。
+
+---
+
+## 9. 记忆维护方案
+
+### 问题
+
+当前 Agent 收到任何用户信息都会主动调用 `create_note` 在 `/_memory/` 下创建新文档，导致知识库中零散记忆文件不断膨胀。根因是系统提示词中的 `proactively save` 指令触发条件过于宽泛。
+
+### 方案：分类收敛到 3 个固定文件
+
+所有长期记忆只写入以下 3 个文件，不创建其他 `/_memory/` 文档：
+
+| 文件 | 定位 | 内容示例 |
+|------|------|----------|
+| `/_memory/user.md` | 用户画像 — "你是谁" | 名字、角色、偏好、习惯 |
+| `/_memory/decisions.md` | 项目决策 — "怎么做" | 技术选型、流程约定、规则设定 |
+| `/_memory/facts.md` | 外部事实 — "世界是什么样" | IP、邮箱、日程、第三方信息 |
+
+### 分类判断
+
+```
+用户说了什么？
+  ├─ 关于自己（名字、角色、喜好、习惯）→ user.md
+  ├─ 关于项目怎么做（技术选型、约定、规则）→ decisions.md
+  ├─ 关于外部世界的事实（IP、账号、日期、第三方信息）→ facts.md
+  └─ 闲聊 / 临时信息 → 不记录
+```
+
+### 文件格式
+
+每个文件统一用 Markdown 列表，每条带时间戳，便于判断新旧和去重：
+
+```markdown
+# User Profile
+
+- [2026-03-22] 名字：张瑾
+- [2026-03-22] 偏好：简洁回答，不要 emoji
+- [2026-03-23] 角色：后端开发，熟悉 Spring Boot
+```
+
+### 写入规则
+
+1. **不主动创建** — 只有用户显式要求记住，或信息明确属于长期有效的画像/决策时才写入
+2. **先读后写** — 写入前必须 `read_note` 目标文件，了解已有内容
+3. **追加或更新** — 同类信息已存在则更新（替换旧条目），否则追加新条目
+4. **不新建文件** — 所有记忆只写入这 3 个文件，不创建额外 `/_memory/` 文档
+5. **闲聊不记** — 起名字、打招呼、随口一说的内容不触发写入
+
+### System Prompt 改动
+
+删除原有的 `proactively save` 指令，替换为：
+
+```
+## Memory Management
+
+You have three memory files. ONLY write to these when the user explicitly asks
+you to remember something, or when the information is clearly long-term valuable:
+
+- /_memory/user.md — Who the user is (name, role, preferences, habits)
+- /_memory/decisions.md — Project decisions (tech choices, conventions, rules)
+- /_memory/facts.md — External facts (IPs, emails, schedules, third-party info)
+
+Rules:
+- ALWAYS read_note the target file before writing, to check existing content.
+- UPDATE existing entries instead of duplicating. Append only if it's new info.
+- NEVER create other files under /_memory/. Only these three files exist.
+- DO NOT save casual chat, greetings, or ephemeral information.
+- Each entry must include a date tag: [YYYY-MM-DD]
+```
+
+### 初始化
+
+3 个文件初始不存在，Agent 在第一次需要写入时才创建对应文件，最多创建 3 个。
+
+### 与其他工具的协作
+
+记忆写入可以和其他 tool_call 在同一轮中并行执行。记忆更新依赖先读后写，由 LLM 在多轮 agent loop 中自行编排，不需要后端做特殊处理。
