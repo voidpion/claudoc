@@ -1,6 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import type { TreeNode, Document } from '../../types';
-import { fetchTrash, restoreNote, permanentDeleteNote } from '../../services/api';
+import { fetchTrash, restoreNote, permanentDeleteNote, createNote } from '../../services/api';
 import './FileTree.css';
 
 interface Props {
@@ -70,6 +70,28 @@ export default function FileTree({ tree, selectedId, onSelect, onRefresh, trashV
   const [trashExpanded, setTrashExpanded] = useState(false);
   const [trashItems, setTrashItems] = useState<Document[]>([]);
   const [trashLoading, setTrashLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const handleUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
+
+    for (const file of Array.from(files)) {
+      try {
+        const content = await file.text();
+        const name = file.name;
+        const title = name.replace(/\.[^.]+$/, '');
+        const path = '/' + name;
+        await createNote(path, title, content);
+      } catch (err) {
+        console.error('Failed to upload:', file.name, err);
+      }
+    }
+
+    // Reset input so the same file can be uploaded again
+    e.target.value = '';
+    onRefresh();
+  };
 
   const loadTrash = async () => {
     setTrashLoading(true);
@@ -119,9 +141,22 @@ export default function FileTree({ tree, selectedId, onSelect, onRefresh, trashV
     <div className="file-tree">
       <div className="file-tree-header">
         <span>Knowledge Base</span>
-        <button className="refresh-btn" onClick={onRefresh} title="Refresh">
-          ↻
-        </button>
+        <div className="header-actions">
+          <button className="header-btn" onClick={() => fileInputRef.current?.click()} title="Upload files">
+            +
+          </button>
+          <button className="header-btn" onClick={onRefresh} title="Refresh">
+            ↻
+          </button>
+        </div>
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept=".txt,.md,.markdown,.json,.yml,.yaml,.xml,.csv,.log"
+          multiple
+          style={{ display: 'none' }}
+          onChange={handleUpload}
+        />
       </div>
       <div className="file-tree-content">
         {tree.map((node) => (

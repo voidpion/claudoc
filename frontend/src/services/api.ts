@@ -40,3 +40,13 @@ export async function restoreNote(id: string): Promise<Document> {
 export async function permanentDeleteNote(id: string): Promise<void> {
   await fetch(`${BASE}/trash/${id}`, { method: 'DELETE' });
 }
+
+// Upload
+export async function createNote(path: string, title: string, content: string): Promise<Document> {
+  const res = await fetch(`${BASE}/notes`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ path, title, content }),
+  });
+  return res.json();
+}

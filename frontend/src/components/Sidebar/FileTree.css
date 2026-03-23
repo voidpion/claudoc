@@ -17,7 +17,12 @@
   letter-spacing: 1px;
 }
 
-.refresh-btn {
+.header-actions {
+  display: flex;
+  gap: 2px;
+}
+
+.header-btn {
   background: none;
   border: none;
   color: var(--text-dim);
@@ -28,7 +33,7 @@
   transition: all 0.15s;
 }
 
-.refresh-btn:hover {
+.header-btn:hover {
   background: var(--bg-surface);
   color: var(--text);
 }
